@@ -19,9 +19,7 @@ body {
   color: var(--text);
   text-shadow: 0 0 4px var(--text-glow);
   font-size: var(--text-size);
-  box-shadow: inset 0 0 1.5rem var(--screen-glow);
-  height: 100vh;
-  padding: 1.5rem;
+  /* box-shadow: inset 0 0 1.5rem var(--screen-glow); */
 }
 
 .blinking-cursor {
