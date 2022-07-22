@@ -120,7 +120,7 @@ fn analog_read(hist: State<Mutex<ReadHistory>>, ticker: State<Mutex<Ticker>>) ->
     let mut ticker = ticker.lock().unwrap();
     ticker.tick();
     let t = ((ticker.value() as f32 / 7.0).sin() + 1.0) / 2.0;
-    let v = lerp(0.2..=0.8, t);
+    let v = lerp(0.44..=0.56, t);
 
     hist.push(v);
 
