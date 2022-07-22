@@ -11,6 +11,8 @@
   --text: rgb(0, 255, 160);
   --text-glow: rgba(0, 255, 160, 0.6);
   --screen-glow: rgba(0, 255, 160, 0.08);
+  --btn: rgb(243, 200, 147);
+  --btn-glow: rgba(243, 200, 147, 0.6);
   --text-size: 18px;
 }
 
@@ -36,4 +38,62 @@ body {
   0%   { opacity: 100% }
   80%  { opacity: 30% }
   100% { opacity: 0% }
+}
+
+.btn {
+  display: block;
+  position: relative;
+  padding: 4px 12px 4px 34px;
+  border: 0;
+  background: transparent;
+  color: var(--btn);
+  text-transform: uppercase;
+
+  transition: opacity 100ms ease-out;
+  opacity: 1;
+
+  &:disabled {
+    padding-left: 12px;
+    pointer-events: none;
+    opacity: 0.5;
+  }
+
+  &:not(:disabled)::after {
+    content: '';
+    display: block;
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    width: 12px;
+    height: 12px;
+    transform: translateY(-50%);
+    border: 2px solid var(--btn);
+    border-radius: 6px;
+    box-shadow: 0 0 4px var(--btn-glow);
+
+    transition: opacity 100ms ease-out;
+    opacity: 1;
+  }
+
+  &:hover {
+    cursor: pointer;
+    opacity: 0.9;
+
+    &::after {
+      opacity: 0.4;
+    }
+
+    &::before {
+      content: '';
+      display: block;
+      position: absolute;
+      left: 14px;
+      top: 50%;
+      width: 4px;
+      height: 4px;
+      transform: translateY(-50%);
+      background: var(--btn);
+      border-radius: 2px;
+    }
+  }
 }

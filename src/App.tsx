@@ -14,7 +14,35 @@ const HEIGHT = 250;
 const SCALE = 1.8;
 
 let animateTimeout: number | null = null;
-let renderTimeout: number | null = null;
+let updateAverage = false;
+let autoZoom = false;
+
+const MAX_ZOOM = 32;
+const MAX_VOLT = 5;
+
+let zoom = 1;
+let min = 0;
+let max = MAX_VOLT;
+
+function analogRead() {
+  return lerp(0.48, 0.52, Math.random());
+}
+
+function clamp(min: number, max: number, n: number) {
+  return Math.min(Math.max(n, min), max);
+}
+
+// t is the distance through the range [0, 1]
+// values of t outside this range will be clamped
+function lerp(min: number, max: number, t: number) {
+  return (max - min) * clamp(0, 1, t) + min;
+}
+
+// given a range and output value from `lerp`, return the
+// `t` required to generate that value in that range
+function invlerp(min: number, max: number, v: number) {
+  return clamp(0, 1, (v - min) / (max - min));
+}
 
 // -- 2D --
 
@@ -126,6 +154,8 @@ const GRID_GLOW = 'rgba(255, 255, 255, 0.1)';
 
 function loop(ctx: Context) {
   let phase = 0;
+  const PHASE_STEP = 1;
+  const coords = new Array(WIDTH - WRITE_GAP * 2).fill(0.5);
 
   function inner() {
     // clear drawable area
@@ -164,27 +194,72 @@ function loop(ctx: Context) {
     ctx.strokeStyle = bright;
     ctx.shadowColor = glowBright;
 
-    // FIXME: scale labels/display with input value range
-
     // draw labels
+    if (autoZoom) {
+      const coordMin = coords.reduce((a, b) => Math.min(a, b));
+      const coordMax = coords.reduce((a, b) => Math.max(a, b));
+      const range = coordMax - coordMin;
+      zoom = (1 / range) * 0.8; // zoom out a bit to leave a gap
+
+      autoZoom = false;
+      updateAverage = true;
+    }
+
+    if (updateAverage) {
+      const average = lerp(
+        0,
+        MAX_VOLT,
+        coords.reduce((a, b) => a + b) / coords.length
+      );
+      const halfRange = MAX_VOLT / zoom / 2;
+      min = average - halfRange;
+      max = average + halfRange;
+
+      updateAverage = false;
+    }
+
     ctx.font = '16px "Syne Mono", monospace';
     ctx.fillStyle = bright;
-    ctx.fillText('-2.5V', WIDTH / 2 - 53, HEIGHT - WRITE_GAP - 5);
-    ctx.fillText('+2.5V', WIDTH / 2 - 53, WRITE_GAP + 18);
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(
+      `${min < 0 ? '' : '+'}${min.toFixed(min < 1 && min >= 0.05 ? 2 : 1)}V`,
+      WIDTH / 2 - 8,
+      HEIGHT - WRITE_GAP - 5
+    );
+    ctx.textBaseline = 'top';
+    ctx.fillText(
+      `${max < 0 ? '' : '+'}${max.toFixed(max < 1 && max >= 0.05 ? 2 : 1)}V`,
+      WIDTH / 2 - 8,
+      WRITE_GAP + 5
+    );
+
+    // get data
+    coords[phase] = analogRead();
+    phase = (phase + PHASE_STEP) % coords.length;
 
     // draw data series
     const pixels = [];
-    for (let i = WRITE_GAP; i < WIDTH - WRITE_GAP; i++) {
-      pixels.push(i);
+    for (let i = 0; i < coords.length; i++) {
+      const t = coords[(i + phase) % coords.length];
+      pixels.push(i + WRITE_GAP);
+      pixels.push(
+        HEIGHT -
+          WRITE_GAP -
+          lerp(
+            24,
+            HEIGHT - WRITE_GAP * 2 - 24,
+            invlerp(min / MAX_VOLT, max / MAX_VOLT, t)
+          )
+      );
 
       // sine wave
       // pixels.push(HEIGHT / 2 + Math.sin(i / 16 + phase) * 40);
 
       // square wave
-      pixels.push(HEIGHT / 2 + (Math.sin(i / 20 + phase) > 0.5 ? 1 : -1) * 40);
+      // pixels.push(HEIGHT / 2 + (Math.sin(i / 20 + phase) > 0.5 ? 1 : -1) * 40);
     }
     drawPixels(ctx, pixels);
-    phase += 0.04;
     animateTimeout = setTimeout(inner, FRAME_RATE);
   }
   inner();
@@ -311,6 +386,26 @@ function App() {
     };
   }, []);
 
+  const auto = () => {
+    autoZoom = true;
+  };
+
+  const reset = () => {
+    zoom = 1;
+    min = 0;
+    max = MAX_VOLT;
+  };
+
+  const zoomIn = () => {
+    zoom = Math.min(zoom * 2, MAX_ZOOM);
+    updateAverage = true;
+  };
+
+  const zoomOut = () => {
+    zoom = Math.max(zoom / 2, 1);
+    updateAverage = true;
+  };
+
   return (
     <div className="flex items-center justify-center h-screen w-screen">
       <div>
@@ -337,6 +432,23 @@ function App() {
           ref={shaderRef}
           style={{ transition: 'opacity 500ms ease-in', opacity: 0 }}
         />
+        <div className="flex flex-row justify-center">
+          <button className="btn mr-5" disabled>
+            function
+          </button>
+          <button className="btn mr-5" onClick={auto}>
+            auto
+          </button>
+          <button className="btn mr-5" onClick={reset}>
+            reset
+          </button>
+          <button className="btn mr-5" onClick={zoomOut}>
+            zoom -
+          </button>
+          <button className="btn" onClick={zoomIn}>
+            zoom +
+          </button>
+        </div>
       </div>
     </div>
   );
