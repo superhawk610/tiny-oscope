@@ -1,8 +1,7 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { invoke } from '@tauri-apps/api';
 import * as THREE from 'three';
 import 'normalize.css';
-
-type Context = CanvasRenderingContext2D;
 
 const bright = 'rgb(0, 255, 160)';
 const dim = 'rgba(0, 255, 160, 0.65)';
@@ -13,9 +12,9 @@ const WIDTH = 400;
 const HEIGHT = 250;
 const SCALE = 1.8;
 
-let animateTimeout: number | null = null;
 let updateAverage = false;
 let autoZoom = false;
+let resetCoords = false;
 
 const MAX_ZOOM = 32;
 const MAX_VOLT = 5;
@@ -24,8 +23,12 @@ let zoom = 1;
 let min = 0;
 let max = MAX_VOLT;
 
-function analogRead() {
-  return lerp(0.48, 0.52, Math.random());
+// returns the current analog voltage reading, as
+// a value in the range [0, 1], where 0 means 0V
+// and 1 means 5V
+function analogRead(): Promise<number> {
+  return invoke('analog_read');
+  // return Math.random();
 }
 
 function clamp(min: number, max: number, n: number) {
@@ -47,7 +50,7 @@ function invlerp(min: number, max: number, v: number) {
 // -- 2D --
 
 function clearScreen(ctx: Context) {
-  ctx.clearRect(0, 0, WIDTH, HEIGHT);
+  ctx.inner.clearRect(0, 0, WIDTH, HEIGHT);
 }
 
 function drawLine(
@@ -57,21 +60,21 @@ function drawLine(
   x2: number,
   y2: number
 ) {
-  ctx.beginPath();
-  ctx.moveTo(x1, y1);
-  ctx.lineTo(x2, y2);
-  ctx.stroke();
+  ctx.inner.beginPath();
+  ctx.inner.moveTo(x1, y1);
+  ctx.inner.lineTo(x2, y2);
+  ctx.inner.stroke();
 }
 
 function drawRect(ctx: Context, x: number, y: number, w: number, h: number) {
-  ctx.beginPath();
-  ctx.moveTo(x, y);
-  ctx.lineTo(x + w, y);
-  ctx.lineTo(x + w, y + h);
-  ctx.lineTo(x, y + h);
-  ctx.lineTo(x, y);
-  ctx.closePath();
-  ctx.stroke();
+  ctx.inner.beginPath();
+  ctx.inner.moveTo(x, y);
+  ctx.inner.lineTo(x + w, y);
+  ctx.inner.lineTo(x + w, y + h);
+  ctx.inner.lineTo(x, y + h);
+  ctx.inner.lineTo(x, y);
+  ctx.inner.closePath();
+  ctx.inner.stroke();
 }
 
 function drawRoundedRect(
@@ -82,18 +85,18 @@ function drawRoundedRect(
   h: number,
   r: number
 ) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.lineTo(x + w - r, y);
-  ctx.arcTo(x + w, y, x + w, y + h - r, r);
-  ctx.lineTo(x + w, y + h - r);
-  ctx.arcTo(x + w, y + h, x + r, y + h, r);
-  ctx.lineTo(x + r, y + h);
-  ctx.arcTo(x, y + h, x, y + r, r);
-  ctx.lineTo(x, y + r);
-  ctx.arcTo(x, y, x + r, y, r);
-  ctx.closePath();
-  ctx.stroke();
+  ctx.inner.beginPath();
+  ctx.inner.moveTo(x + r, y);
+  ctx.inner.lineTo(x + w - r, y);
+  ctx.inner.arcTo(x + w, y, x + w, y + h - r, r);
+  ctx.inner.lineTo(x + w, y + h - r);
+  ctx.inner.arcTo(x + w, y + h, x + r, y + h, r);
+  ctx.inner.lineTo(x + r, y + h);
+  ctx.inner.arcTo(x, y + h, x, y + r, r);
+  ctx.inner.lineTo(x, y + r);
+  ctx.inner.arcTo(x, y, x + r, y, r);
+  ctx.inner.closePath();
+  ctx.inner.stroke();
 }
 
 function drawPixels(ctx: Context, pixels: number[]) {
@@ -105,14 +108,14 @@ function drawPixels(ctx: Context, pixels: number[]) {
     return;
   }
 
-  ctx.beginPath();
-  ctx.moveTo(pixels[0], pixels[1]);
+  ctx.inner.beginPath();
+  ctx.inner.moveTo(pixels[0], pixels[1]);
   for (let i = 2; i < pixels.length; i += 2) {
     const x = pixels[i];
     const y = pixels[i + 1];
-    ctx.lineTo(x, y);
+    ctx.inner.lineTo(x, y);
   }
-  ctx.stroke();
+  ctx.inner.stroke();
 }
 
 const SCREEN_GAP = 10;
@@ -124,11 +127,11 @@ function draw(ctx: Context) {
   clearScreen(ctx);
 
   // set stroke/shadow color
-  ctx.strokeStyle = bright;
-  ctx.shadowColor = glowBright;
-  ctx.shadowOffsetX = 0;
-  ctx.shadowOffsetY = 0;
-  ctx.shadowBlur = 2;
+  ctx.inner.strokeStyle = bright;
+  ctx.inner.shadowColor = glowBright;
+  ctx.inner.shadowOffsetX = 0;
+  ctx.inner.shadowOffsetY = 0;
+  ctx.inner.shadowBlur = 2;
 
   // draw screen border
   drawRoundedRect(
@@ -155,11 +158,17 @@ const GRID_GLOW = 'rgba(255, 255, 255, 0.1)';
 function loop(ctx: Context) {
   let phase = 0;
   const PHASE_STEP = 1;
-  const coords = new Array(WIDTH - WRITE_GAP * 2).fill(0.5);
+  let coords: number[];
+  resetCoords = true;
 
-  function inner() {
+  async function inner() {
+    if (resetCoords) {
+      coords = new Array(WIDTH - WRITE_GAP * 2).fill(0.5);
+      resetCoords = false;
+    }
+
     // clear drawable area
-    ctx.clearRect(
+    ctx.inner.clearRect(
       SAFE_GAP,
       SAFE_GAP,
       WIDTH - 2 * SAFE_GAP,
@@ -167,9 +176,9 @@ function loop(ctx: Context) {
     );
 
     // draw gridlines
-    ctx.strokeStyle = GRID_LINE;
-    ctx.shadowColor = GRID_GLOW;
-    ctx.setLineDash([16, 5]);
+    ctx.inner.strokeStyle = GRID_LINE;
+    ctx.inner.shadowColor = GRID_GLOW;
+    ctx.inner.setLineDash([16, 5]);
     for (
       let i = WRITE_GAP + GRID_OFFSET;
       i < HEIGHT - WRITE_GAP;
@@ -184,15 +193,15 @@ function loop(ctx: Context) {
     ) {
       drawLine(ctx, i, WRITE_GAP, i, HEIGHT - WRITE_GAP);
     }
-    ctx.strokeStyle = dim;
-    ctx.shadowColor = glowDim;
-    ctx.setLineDash([]);
+    ctx.inner.strokeStyle = dim;
+    ctx.inner.shadowColor = glowDim;
+    ctx.inner.setLineDash([]);
 
     // draw axes
     drawLine(ctx, WRITE_GAP, HEIGHT / 2, WIDTH - WRITE_GAP, HEIGHT / 2);
     drawLine(ctx, WIDTH / 2, WRITE_GAP, WIDTH / 2, HEIGHT - WRITE_GAP);
-    ctx.strokeStyle = bright;
-    ctx.shadowColor = glowBright;
+    ctx.inner.strokeStyle = bright;
+    ctx.inner.shadowColor = glowBright;
 
     // draw labels
     if (autoZoom) {
@@ -200,6 +209,7 @@ function loop(ctx: Context) {
       const coordMax = coords.reduce((a, b) => Math.max(a, b));
       const range = coordMax - coordMin;
       zoom = (1 / range) * 0.8; // zoom out a bit to leave a gap
+      zoom = Math.max(1, zoom); // try not to zoom too far outside 5V
 
       autoZoom = false;
       updateAverage = true;
@@ -218,24 +228,24 @@ function loop(ctx: Context) {
       updateAverage = false;
     }
 
-    ctx.font = '16px "Syne Mono", monospace';
-    ctx.fillStyle = bright;
-    ctx.textAlign = 'right';
-    ctx.textBaseline = 'bottom';
-    ctx.fillText(
+    ctx.inner.font = '16px "Syne Mono", monospace';
+    ctx.inner.fillStyle = bright;
+    ctx.inner.textAlign = 'right';
+    ctx.inner.textBaseline = 'bottom';
+    ctx.inner.fillText(
       `${min < 0 ? '' : '+'}${min.toFixed(min < 1 && min >= 0.05 ? 2 : 1)}V`,
       WIDTH / 2 - 8,
       HEIGHT - WRITE_GAP - 5
     );
-    ctx.textBaseline = 'top';
-    ctx.fillText(
+    ctx.inner.textBaseline = 'top';
+    ctx.inner.fillText(
       `${max < 0 ? '' : '+'}${max.toFixed(max < 1 && max >= 0.05 ? 2 : 1)}V`,
       WIDTH / 2 - 8,
       WRITE_GAP + 5
     );
 
     // get data
-    coords[phase] = analogRead();
+    coords[phase] = await analogRead();
     phase = (phase + PHASE_STEP) % coords.length;
 
     // draw data series
@@ -260,12 +270,25 @@ function loop(ctx: Context) {
       // pixels.push(HEIGHT / 2 + (Math.sin(i / 20 + phase) > 0.5 ? 1 : -1) * 40);
     }
     drawPixels(ctx, pixels);
-    animateTimeout = setTimeout(inner, FRAME_RATE);
+    if (ctx.texture) ctx.texture.needsUpdate = true;
+    if (!ctx.closed) ctx.timeout = setTimeout(inner, FRAME_RATE);
   }
-  inner();
+  if (!ctx.closed) inner();
 }
 
 // -- 3D --
+
+interface Context {
+  inner: CanvasRenderingContext2D;
+  timeout: number | null;
+  closed: boolean;
+
+  // probably cursed, oh well
+  // (seems like 3D texture will rely on the 2D renderer to update
+  // it in a timely fashion, so we should probably just combine the
+  // 2D/3D contexts, or maybe nest them)
+  texture: THREE.Texture | null;
+}
 
 interface GLContext {
   // The 2D canvas backing the WebGL output.
@@ -275,12 +298,14 @@ interface GLContext {
   camera: THREE.PerspectiveCamera;
 }
 
-function render(gl: GLContext) {
+function render(gl: GLContext, ctx: Context) {
   const texture = new THREE.CanvasTexture(gl.canvas);
   // const material = new THREE.MeshBasicMaterial({
   //   map: texture,
   //   transparent: true,
   // });
+
+  ctx.texture = texture;
 
   const vertexShader = `
     varying vec2 v_uv;
@@ -335,14 +360,15 @@ function render(gl: GLContext) {
 
   gl.renderer.setSize(WIDTH * SCALE, HEIGHT * SCALE);
   gl.renderer.setAnimationLoop(() => {
-    texture.needsUpdate = true;
+    // texture.needsUpdate = true;
     gl.renderer.render(gl.scene, gl.camera);
   });
   setTimeout(() => (gl.renderer.domElement.style.opacity = '1'), 500);
 }
 
 function cleanup(ctx: Context, gl: GLContext) {
-  if (animateTimeout) clearTimeout(animateTimeout);
+  ctx.closed = true;
+  if (ctx.timeout) clearTimeout(ctx.timeout);
   clearScreen(ctx);
 
   gl.renderer.setAnimationLoop(null);
@@ -350,9 +376,23 @@ function cleanup(ctx: Context, gl: GLContext) {
   gl.renderer.clear();
 }
 
+interface Stats {
+  amplitude: number;
+  frequency: number;
+  wavelength: number;
+}
+
+function fetchStats(): Promise<Stats> {
+  return invoke('stats');
+}
+
 function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const shaderRef = useRef<HTMLCanvasElement>(null);
+
+  const [amplitude, setAmplitude] = useState('--');
+  const [frequency, setFrequency] = useState('--');
+  const [wavelength, setWavelength] = useState('--');
 
   useEffect(() => {
     // not sure if doing this inside `useEffect` works?
@@ -362,7 +402,8 @@ function App() {
 
     canvas.width = WIDTH;
     canvas.height = HEIGHT;
-    const ctx = canvas.getContext('2d')!;
+    const inner = canvas.getContext('2d')!;
+    const ctx = { inner, timeout: null, closed: false, texture: null };
     draw(ctx);
 
     const scene = new THREE.Scene();
@@ -379,10 +420,23 @@ function App() {
       antialias: true,
     });
     const gl = { canvas, renderer, scene, camera };
-    render(gl);
+    render(gl, ctx);
 
     return () => {
       cleanup(ctx, gl);
+    };
+  }, []);
+
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      const stats = await fetchStats();
+      setAmplitude(`${stats.amplitude.toFixed(3)}V`);
+      setFrequency(`${stats.frequency.toFixed(3)}Hz`);
+      setWavelength(`${stats.wavelength.toFixed(3)}s`);
+    }, 1_000);
+
+    return () => {
+      clearInterval(interval);
     };
   }, []);
 
@@ -394,6 +448,7 @@ function App() {
     zoom = 1;
     min = 0;
     max = MAX_VOLT;
+    resetCoords = true;
   };
 
   const zoomIn = () => {
@@ -432,6 +487,11 @@ function App() {
           ref={shaderRef}
           style={{ transition: 'opacity 500ms ease-in', opacity: 0 }}
         />
+        <div className="flex flex-row justify-center" style={{ opacity: 0.7 }}>
+          <div className="mr-12">AMP: {amplitude}</div>
+          <div className="mr-12">FREQ: {frequency}</div>
+          <div>WVLN: {wavelength}</div>
+        </div>
         <div className="flex flex-row justify-center">
           <button className="btn mr-5" disabled>
             function
